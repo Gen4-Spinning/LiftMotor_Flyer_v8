@@ -14,7 +14,7 @@ extern uint8_t enable_overRideLiftLimitError;
 void FDCAN_liftRunDataFromMotor(void)
 {
 	TxHeader.Identifier =(0xE0C01<<8)|S.CAN_ID;//set to transmit runtime data frame from flyer to motherboard
-	TxHeader.DataLength = FDCAN_DLC_BYTES_16;
+	TxHeader.DataLength = FDCAN_DLC_BYTES_20;
 
 	TxData[0]=(uint16_t)(R.targetPosition*100.0)>>8;
 	TxData[1]=(uint16_t)(R.targetPosition*100.0);
@@ -31,6 +31,13 @@ void FDCAN_liftRunDataFromMotor(void)
 	TxData[12]=(R.busVoltageADC)>>8;
 	TxData[13]=R.busVoltageADC;
 	TxData[14]=R.liftDirection;
+
+	TxData[15]=(uint16_t)(R.GBPresentPosition*100.0)>>8;
+	TxData[16]=(uint16_t)(R.GBPresentPosition*100.0);
+	TxData[17]=(uint16_t)(R.encPresentPosition*100.0)>>8;
+	TxData[18]=(uint16_t)(R.encPresentPosition*100.0);
+	TxData[19]=R.usingPosition;
+
 
 	if (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1)>1){
 		HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, TxData);
@@ -182,8 +189,8 @@ void FDCAN_GBresponseFromMotor(uint8_t source,GB_TypeDef *gb){
 	TxData[1]=gb->PWM_cnts ;
 	TxData[2]=(uint16_t)(gb->PWM_dutyCycle*100) >> 8 ;
 	TxData[3]=(uint16_t)(gb->PWM_dutyCycle*100);
-	TxData[4]=(uint16_t)(gb->absPosition*100) >> 8 ;
-	TxData[5]=(uint16_t)(gb->absPosition*100) ;
+	TxData[4]=(uint16_t)(gb->correctedPosition*100) >> 8 ;
+	TxData[5]=(uint16_t)(gb->correctedPosition*100) ;
 	TxData[6]=1;
 	TxData[7]=1;
 	while(HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1)==0);

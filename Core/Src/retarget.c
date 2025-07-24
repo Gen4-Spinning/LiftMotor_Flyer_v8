@@ -94,5 +94,13 @@ int _fstat(int fd, struct stat* st) {
   errno = EBADF;
   return 0;
 }
+int _kill(int pid, int sig) {
+  errno = EINVAL;
+  return -1;
+}
+
+int _getpid(void) {
+  return 1;
+}
 
 #endif //#if !defined(OS_USE_SEMIHOSTING)

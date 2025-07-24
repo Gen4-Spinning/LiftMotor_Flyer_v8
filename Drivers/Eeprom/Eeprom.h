@@ -21,4 +21,5 @@ float bytes2Float(uint8_t* bytes_array);
 uint8_t EE_WriteFloat(float floatVal,uint16_t memoryLocation);
 float EE_ReadFloat(uint16_t memoryLocation);
 
+
 #endif /* EEPROM_EEPROM_H_ */

@@ -20,12 +20,19 @@ extern uint8_t disable_overRideLiftLimitError;
 void init_GB(GB_TypeDef *gb){
 	gb->ErrorFlag = 0;
 	gb->PWM_cnts = 0;
+	gb->prevPWM_cnts = 0;
+	gb->useCnts = 0;
+	gb->readFirstTime = 1;
+
 	gb->PWM_Period = 0;
 
 	gb->PWM_dutyCycle = 0;
-	gb->absPosition = 0;
+	gb->correctedPosition = 0;
 	gb->prevAbsPosition = 0;
-
+	gb->correctedPosition =0;
+	gb->RawPosition=0;
+	gb->badreadingcounter=0;
+	gb->correctedPosition=0;
 
 	gb->firstReading = 0;
 
@@ -34,6 +41,18 @@ void init_GB(GB_TypeDef *gb){
 	gb->MB_requestTimer = 0;
 
 }
+
+void init_EG(Error_TypeDef *egb) {
+    for (int i = 0; i < MAX_BINS; i++) {
+        egb->bin_sums[i] = 0.0f;
+        egb->bin_counts[i] = 0;
+        egb->bin_min_enc[i] = 0;
+        egb->bin_max_enc[i] = 0;
+        egb->bin_means[i] = 0.0f;
+    }
+    egb->prev_bin = -1;  // Important initialization
+}
+
 /*
 uint8_t check_GB_Encoder_Health(void){
 	if (GB.PWM_dutyCycle <= GB_ENCODER_ERROR_DUTY_CYCLE){
@@ -72,8 +91,8 @@ void Answer_GB_Request(void){
 
 
 void CalculateGB_deltaPosition(GB_TypeDef *gb){
-	gb->deltaAbsPosition = gb->absPosition - gb->prevAbsPosition;
-	gb->prevAbsPosition = gb->absPosition;
+	gb->deltaAbsPosition = gb->correctedPosition - gb->prevAbsPosition;
+	gb->prevAbsPosition = gb->correctedPosition;
 }
 
 //Debug for testing GearBoxes

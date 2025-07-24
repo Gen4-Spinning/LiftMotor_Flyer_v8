@@ -18,5 +18,10 @@
 #define OFFSET_INDEX_ADDRESS 0X12 //int
 #define DEFAULT_DIRECTION_ADDRESS 0X14 //int
 #define LIFT_HOMING_POSITION 0X16 //int
+//it will end 0x18
 
+#define GERABOX_ERROR_VALUE 0X20
+
+
+//
 #endif /* INC_EEPROMSETTINGS_H_ */

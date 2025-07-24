@@ -8,6 +8,9 @@
 #include "Eeprom.h"
 #include "EepromSettings.h"
 #include "EepromFns.h"
+#include "GB.h"
+
+#define FLOAT_SIZE 4
 
 void readSettingsFromEEPROM(settingVar *sV)
 {
@@ -44,6 +47,33 @@ uint8_t writePWMSettingsToEEPROM(settingVar *stV)
     else{
     	return 0;}
 }
+
+
+uint8_t writeGBBinErrorsToEEPROM(void)
+{
+    uint8_t dataWritten = 0;
+    for (int i = 0; i < MAX_BINS; i++) {
+        uint16_t addr = GERABOX_ERROR_VALUE + (i * FLOAT_SIZE);
+        dataWritten += EE_WriteFloat(EGB.final_bin_errors[i], addr);
+        HAL_Delay(1);
+    }
+
+    if (dataWritten <= MAX_BINS)
+        return 1;
+    else
+        return 0;
+}
+
+
+void readGBBinMeanErrorsFromEEPROM(float *binErrors)
+{
+    for (int i = 0; i < MAX_BINS; i++) {
+        uint16_t addr = GERABOX_ERROR_VALUE + (i * FLOAT_SIZE);
+        binErrors[i] = EE_ReadFloat(addr);
+    }
+}
+
+
 
 uint8_t writePWMSettingsToEEPROM_Manual(float Kp, float Ki,int ff_percent, int start_offset)
 {

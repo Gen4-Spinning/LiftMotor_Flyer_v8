@@ -118,6 +118,7 @@ sixSectorCntrl sixSectorCntrl_Obj;
 
 //positioning Structs
 GB_TypeDef GB;
+Error_TypeDef EGB;
 LiftRampDuty liftRampDuty;
 PosController PC;
 PosOL_TypeDef posOL;
@@ -207,6 +208,14 @@ float console_EncPosCurrentDistance=0;
 float console_GBPosCurrentDistance=0;
 uint8_t here=0;
 
+//#define BIN_SIZE 17
+//#define MAX_BINS 300 / BIN_SIZE  // Adjust if ENC.absPosition range is more
+//
+//int bin_counts[MAX_BINS] = {0};
+//float bin_sums[MAX_BINS] = {0.0};
+//float bin_means[MAX_BINS] = {0.0};
+
+
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 
 	if (htim->Instance==TIM1){ // PWM interrupt
@@ -245,11 +254,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 					//So apart from hominh where we use the gearBox to move us to the homing postion,
 					//during the run we use the abs posotion from the encPos struct
 					encPos_CalculateAbsPosition(&encPos,posOL.moveDirection);
-					posOL_updateMoveDists_FromBothEncoders(&posOL,GB.absPosition,encPos.strokeMovement_mm);
+					posOL_updateMoveDists_FromBothEncoders(&posOL,GB.correctedPosition,encPos.strokeMovement_mm);
 					posOL_CheckTargetReached_wMotorEncoder(&posOL,encPos.strokeMovement_mm);
 
 					CalculateGB_deltaPosition(&GB);
-					encPos_CalculateDeltaAbsPos_withGB(&encPos,GB.deltaAbsPosition,GB.absPosition);
+					encPos_CalculateDeltaAbsPos_withGB(&encPos,GB.deltaAbsPosition,GB.correctedPosition);
 					//posOL_CheckTargetReached(&posOL);
 					if (posOL.targetReached){
 						liftRampDuty.rampPhase = RAMP_OVER;
@@ -290,7 +299,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 
 					encPos_CalculateMovement(&encPos,&encSpeed);
 					encPos_CalculateAbsPosition(&encPos,posCL.moveDirection);
-					posCL_updateMoveDists_FromBothEncoders(&posCL,GB.absPosition,encPos.strokeMovement_mm);
+					posCL_updateMoveDists_FromBothEncoders(&posCL,GB.correctedPosition,encPos.strokeMovement_mm);
 					if (S.motorState == HOMING_STATE){
 						ExecPID_PosLift_GBEncoder(&PIDpos,&PC,&posCL);
 					}else{
@@ -298,7 +307,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 					}
 
 					CalculateGB_deltaPosition(&GB);
-					encPos_CalculateDeltaAbsPos_withGB(&encPos,GB.deltaAbsPosition,GB.absPosition);
+					encPos_CalculateDeltaAbsPos_withGB(&encPos,GB.deltaAbsPosition,GB.correctedPosition);
 
 					if(PIDpos.errorF >= 5){  // to check this value
 						E.errorFlag=E.liftPosTrackingError= 1;
@@ -361,17 +370,21 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 			R.appliedDuty = PIDpos.pwm;
 			if (S.motorState == HOMING_STATE){
 				R.targetPosition = posCL.GB_absEndPosition;
-				R.presentPosition = GB.absPosition;
+				R.presentPosition = GB.correctedPosition;
+				R.usingPosition = 1;
 			}else{
 				R.targetPosition = posCL.encPos_absEndPosition;
 				R.presentPosition = encPos.absPosition;
+				R.usingPosition = 2;
 			}
 			R.liftDirection = posCL.moveDirection;
 			R.presentRPM = encSpeed.speedRPM;
 			R.proportionalTerm = PIDpos.Kp_term;
 			R.IntegralTerm = PIDpos.Ki_term;
 			R.feedforwardTerm = PIDpos.feedForwardTerm;
-			R.startOffsetTerm = PIDpos.startOffsetTerm;
+			R.startOffsetTerm = PIDpos.startOffsetTerm;//r.gbcurrenpos 16bit r.enccurretnpos 16bit, r.usingpos either 1 bit
+			R.GBPresentPosition = GB.correctedPosition;
+			R.encPresentPosition= encPos.absPosition;
 		}
 
 		if (C.logging == 1){
@@ -385,16 +398,58 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 				console_EncPosCurrentDistance = posOL.encPoscurrentMoveDist_mm;
 				console_GBPosCurrentDistance = posOL.GBPoscurrentMoveDist_mm;
 			}
+
 			//Time.strokeVelocity,targetDist,EncActualDist,Error,GB_ActualDist,GBAbsPos,EncAbsPos,duty,Current,liftRPM
-			if (C.calibRun){
-				sprintf(UART_buffer,"D:%04d,%04d,%7.2f,%05d,%7.2f,%7.2f:E\r\n",
-					T.tim16_oneSecTimer,R.appliedDuty,console_EncPosCurrentDistance,GB.PWM_cnts,console_GBPosCurrentDistance,GB.absPosition);
-				HAL_UART_Transmit_IT(&huart3,(uint8_t *)UART_buffer,45);
-			}else{
+
+		if (C.calibRun) {
+			int enc = encPos.absPosition;
+			int gb =  GB.RawPosition;//it should raw gb value
+			float error = (float)(enc - gb);
+
+		int bin;
+		if (enc >= 0) {
+		bin = enc / BIN_SIZE;
+		} else {
+		bin = -1;
+		}
+		float avg_error = 0;
+		if (bin >= 0 && bin < MAX_BINS) {
+		// If moved to a new bin, finalize previous bin avg if moved to 0 to 1 finalize bin0 value and store
+			if (EGB.prev_bin != -1 && bin != EGB.prev_bin && EGB.bin_counts[EGB.prev_bin] > 0) { //A previous bin is set =-1,
+				//The current bin is different from the previous one, indicating that a new bin has been entered
+		//the previous bin contains at least one element avoids dividing by zero
+				float finalized_avg = EGB.bin_sums[EGB.prev_bin] / EGB.bin_counts[EGB.prev_bin];
+				EGB.bin_means[EGB.prev_bin] = finalized_avg;
+			}
+			//  error for this bin
+			EGB.bin_sums[bin] += error;
+			EGB.bin_counts[bin]++;
+			if (EGB.bin_counts[bin] == 1) {// If this is the first value in the bin, initialize min and max
+				EGB.bin_min_enc[bin] = enc;
+				EGB.bin_max_enc[bin] = enc;
+					}
+			else { // Update min and max encodings for this bin
+				if (enc < EGB.bin_min_enc[bin])
+				EGB.bin_min_enc[bin] = enc;
+				if (enc > EGB.bin_max_enc[bin])
+				EGB.bin_max_enc[bin] = enc;
+					}
+				avg_error = EGB.bin_sums[bin] / EGB.bin_counts[bin];//// Recalculate average error for this bin
+				EGB.prev_bin = bin;//// Update the previous bin tracker
+			}
+		sprintf(UART_buffer,
+		"ENC:%05d, GB:%05d, ERROR:%7.2f, AVG_ERR:%7.2f, BIN:%03d\r\n",enc, gb, error, avg_error, bin);
+		HAL_UART_Transmit_IT(&huart3, (uint8_t *)UART_buffer, strlen(UART_buffer));
+		}
+//				//DELTA ERROR ENC-GB PRINT GB
+//				sprintf(UART_buffer,"D:%04d,%04d,%7.2f,%05d,%7.2f,%7.2f:E\r\n",
+//					T.tim16_oneSecTimer,R.appliedDuty,console_EncPosCurrentDistance,GB.PWM_cnts,console_GBPosCurrentDistance,GB.absPosition);
+//				HAL_UART_Transmit_IT(&huart3,(uint8_t *)UART_buffer,45);
+			else{
 				sprintf(UART_buffer,"D:%03d,%4.2f,%6.2f,%6.2f,%7.2f,%6.2f,%7.2f,%7.2f,%05d,%04d,%4.2f,%04d:E\r\n",
 						T.tim16_oneSecTimer,encPos.strokeVelocity_mm_sec,
 						PC.currentDist,console_EncPosCurrentDistance,posCL.PID_positioningErr,
-						console_GBPosCurrentDistance,GB.absPosition,encPos.absPosition,GB.PWM_cnts,
+						console_GBPosCurrentDistance, GB.RawPosition,encPos.absPosition,GB.PWM_cnts,
 						R.appliedDuty,R.currentAmps,R.presentRPM);
 				HAL_UART_Transmit_IT(&huart3,(uint8_t *)UART_buffer,80);
 			}
@@ -515,20 +570,99 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 }
 
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim){
-	if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2){
-		GB.PWM_Period =HAL_TIM_ReadCapturedValue(htim,TIM_CHANNEL_2);
+    if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2){
+        GB.PWM_Period = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2);
 
-		GB.rawPWM_cnts = HAL_TIM_ReadCapturedValue(htim,TIM_CHANNEL_1);
-		GB.PWM_cnts  = GB.rawPWM_cnts  - THROW_AWAY_COUNTS;
+        GB.rawPWM_cnts = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_1);
+        GB.PWM_cnts = GB.rawPWM_cnts - THROW_AWAY_COUNTS;
 
-		if (GB.PWM_Period != 0){
-			GB.PWM_dutyCycle = (((float)GB.PWM_cnts * 100.0)/GB_ENCODER_SINGLE_ROTATION_IN_TIM3CNTS);
-			GB.absPosition= (GB.PWM_cnts - posPts.homingPositionCnts)/(float)GB_ENCODER_TIM3CNTS_PER_MM;
-		}
+        if(GB.readFirstTime == 1){
+            GB.prevPWM_cnts = GB.PWM_cnts;
+            GB.readFirstTime = 0;
+        }
 
-	}
+        if (abs(GB.PWM_cnts - GB.prevPWM_cnts) > 1000 ){
+            GB.useCnts = GB.prevPWM_cnts;
+            GB.badreadingcounter++;
+        }else{
+            GB.useCnts = GB.PWM_cnts;
+            GB.prevPWM_cnts = GB.PWM_cnts;
+        }
+
+        if (GB.PWM_Period != 0){
+            GB.PWM_dutyCycle = ((float)GB.useCnts * 100.0)/GB_ENCODER_SINGLE_ROTATION_IN_TIM3CNTS;
+            GB.RawPosition= (GB.useCnts - posPts.homingPositionCnts)/(float)GB_ENCODER_TIM3CNTS_PER_MM;
+            GB.correctedPosition = GB.RawPosition;
+
+            if (GB.correctedPosition >= 0) {
+                int bin_index = (int)(GB.correctedPosition / BIN_SIZE);
+                if (bin_index >= 0 && bin_index < MAX_BINS) {
+                	GB.correctedPosition += EGB.binErrorTable[bin_index];
+                }
+            }
+
+
+//        if (GB.PWM_Period != 0){
+//            GB.PWM_dutyCycle = ((float)GB.useCnts * 100.0)/GB_ENCODER_SINGLE_ROTATION_IN_TIM3CNTS;
+//            GB.absPosition = (GB.useCnts - posPts.homingPositionCnts)/(float)GB_ENCODER_TIM3CNTS_PER_MM;
+//
+//            // Error correction based on updated table values
+//            if (GB.absPosition < 0) {
+//                // For negative positions, correction is 0
+//                GB.absPosition += 0;
+//            }
+//            else if (GB.absPosition >= 0 && GB.absPosition < 18) {
+//                GB.absPosition += (-0.04103);
+//            }
+//            else if (GB.absPosition >= 18 && GB.absPosition < 35) {
+//                GB.absPosition += (-0.74556);
+//            }
+//            else if (GB.absPosition >= 35 && GB.absPosition < 52) {
+//                GB.absPosition += (-1.52771);
+//            }
+//            else if (GB.absPosition >= 52 && GB.absPosition < 69) {
+//                GB.absPosition += (-1.77108);
+//            }
+//            else if (GB.absPosition >= 69 && GB.absPosition < 86) {
+//                GB.absPosition += (-2.3494);
+//            }
+//            else if (GB.absPosition >= 86 && GB.absPosition < 103) {
+//                GB.absPosition += (-2.90909);
+//            }
+//            else if (GB.absPosition >= 103 && GB.absPosition < 120) {
+//                GB.absPosition += (-3.33133);
+//            }
+//            else if (GB.absPosition >= 120 && GB.absPosition < 137) {
+//                GB.absPosition += (-3.8);
+//            }
+//            else if (GB.absPosition >= 137 && GB.absPosition < 154) {
+//                GB.absPosition += (-4.35152);
+//            }
+//            else if (GB.absPosition >= 154 && GB.absPosition < 171) {
+//                GB.absPosition += (-5.17683);
+//            }
+//            else if (GB.absPosition >= 171 && GB.absPosition < 188) {
+//                GB.absPosition += (-5.6988);
+//            }
+//            else if (GB.absPosition >= 188 && GB.absPosition < 205) {
+//                GB.absPosition += (-6.46409);
+//            }
+//            else if (GB.absPosition >= 205 && GB.absPosition < 222) {
+//                GB.absPosition += (-7.18239);
+//            }
+//            else if (GB.absPosition >= 222 && GB.absPosition < 239) {
+//                GB.absPosition += (-7.88387);
+//            }
+//            else if (GB.absPosition >= 239 && GB.absPosition < 261) {
+//                GB.absPosition += (-8.4466);
+//            }
+//            else {
+//                GB.correctedPosition += 0;
+//            }
+//        }
+    }
 }
-
+}
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 	if ((S.motorState == IDLE_STATE)||(S.motorState == ERROR_STATE)){
@@ -625,6 +759,8 @@ int main(void)
   initPosPts(&posPts);
   InitLiftRampDuty(&liftRampDuty);
 
+  readGBBinMeanErrorsFromEEPROM(EGB.binErrorTable);
+
 
   //Calibrate ADCs and start them
   HAL_Delay(100);
@@ -709,7 +845,7 @@ int main(void)
   }
 
   if (setup.eepromHomingPositionGood == 0){
-	  S.motorSetupFailed = E.errorFlag = E.eerpomBadHomingPos = 1;
+	  S.motorSetupFailed = E.errorFlag = E.eepromBadHomingPos = 1;
 	  R.motorError = 1 << ERR_EBH_SHIFT;
   }
   if (setup.defaults_eepromWriteFailed == 1 ){
@@ -751,7 +887,7 @@ int main(void)
   HAL_TIM_IC_Start(&htim3,TIM_CHANNEL_1); // FALLING EDGE
 
   HAL_Delay(100); //we need to allow the start the 100ms timer used to check encoder Health
-  GB.firstReading = 1; // give some time from when the encoder start to before we take the first reading
+  GB.readFirstTime = 1; // give some time from when the encoder start to before we take the first reading
   HAL_Delay(100); //another delay to get good readings on the encoder. these delays are very important
   //because immedietly after we are checking for extreme limits. TODO: re look at this.
 
@@ -897,7 +1033,7 @@ int main(void)
 		LRM.runType = LOCAL_DEBUG;
 		LRM.controlType = CLOSED_LOOP;
 		S.motorState = RUN_STATE;
-		posCL_SetupMove(&posCL,GB.absPosition,LRM.distance,LRM.direction,LRM.time);
+		posCL_SetupMove(&posCL,GB.correctedPosition,LRM.distance,LRM.direction,LRM.time);
 		posCL_SetupEncPosMove(&posCL,encPos.absPosition,LRM.distance,LRM.direction);
 		encPos_ZeroMovement(&encPos);
 
@@ -928,7 +1064,7 @@ int main(void)
 		  LRM.runType = LOCAL_DEBUG;
 		  LRM.controlType = CLOSED_LOOP;
 		  S.motorState = RUN_STATE;
-		  posCL_SetupMove(&posCL,GB.absPosition,LRM.distance,LRM.direction,LRM.time);
+		  posCL_SetupMove(&posCL,GB.correctedPosition,LRM.distance,LRM.direction,LRM.time);
 		  posCL_SetupEncPosMove(&posCL,encPos.absPosition,LRM.distance,LRM.direction);
 		  encPos_ZeroMovement(&encPos);
 		  PC_Reset(&PC);
@@ -965,7 +1101,7 @@ int main(void)
 		  LRM.controlType = CLOSED_LOOP;
 		  S.motorState = RUN_STATE;
 		  PC_Reset(&PC);
-		  posCL_SetupMove(&posCL,GB.absPosition,posCL.remainingDistance_mm,LRM.direction,remainingTime);
+		  posCL_SetupMove(&posCL,GB.correctedPosition,posCL.remainingDistance_mm,LRM.direction,remainingTime);
 		  posCL_SetupEncPosMove(&posCL,encPos.absPosition,posCL.remainingDistance_mm,LRM.direction);
 		  encPos_ZeroMovement(&encPos);
 		  PC_SetupMove(&PC,posCL.remainingDistance_mm,remainingTime, LRM.direction);
@@ -991,7 +1127,7 @@ int main(void)
 			  S.motorState = HOMING_STATE;
 			  if (posPts.homingControlType == CLOSED_LOOP){
 				  LRM.controlType = CLOSED_LOOP;
-				  posCL_SetupMove(&posCL,GB.absPosition,posPts.homingDistance,posPts.homingDirection,posPts.homingTime);
+				  posCL_SetupMove(&posCL,GB.correctedPosition,posPts.homingDistance,posPts.homingDirection,posPts.homingTime);
 				  posCL_SetupEncPosMove(&posCL,encPos.absPosition,posPts.homingDistance,posPts.homingDirection);
 				  encPos_ZeroMovement(&encPos);
 
@@ -1007,7 +1143,7 @@ int main(void)
 			  }else{
 				  LRM.controlType = OPEN_LOOP;
 				  uint16_t homingDuty = 300;
-				  posOL_SetupMove(&posOL,GB.absPosition,posPts.homingDistance,posPts.homingDirection,homingDuty);
+				  posOL_SetupMove(&posOL,GB.correctedPosition,posPts.homingDistance,posPts.homingDirection,homingDuty);
 				  posOL_SetupEncPosMove(&posOL,encPos.absPosition,posPts.homingDistance,posPts.homingDirection);
 				  encPos_ZeroMovement(&encPos);
 				  SetupLiftRampDuty(&liftRampDuty,homingDuty,1000,1000,RUN_FOREVER,400,800);
@@ -1015,7 +1151,7 @@ int main(void)
 				  StartLiftRampDuty(&liftRampDuty);
 			  }
 		  }else{
-			  encPos_ZeroAbsPosition(&encPos,GB.absPosition);
+			  encPos_ZeroAbsPosition(&encPos,GB.correctedPosition);
 		  }
 		  dbg_homing_start = 0;
 	  }
@@ -1023,7 +1159,7 @@ int main(void)
 	  if (dbg_posOL_start){
 		LRM.controlType = OPEN_LOOP;
 		LRM.runType = LOCAL_DEBUG;
-		posOL_SetupMove(&posOL,GB.absPosition,LRM.distance,LRM.direction,LRM.duty);
+		posOL_SetupMove(&posOL,GB.correctedPosition,LRM.distance,LRM.direction,LRM.duty);
 		posOL_SetupEncPosMove(&posOL,encPos.absPosition,LRM.distance,LRM.direction);
 		encPos_ZeroMovement(&encPos);
 		SetupLiftRampDuty(&liftRampDuty,LRM.duty,2000,2000,RUN_FOREVER,400,800);
@@ -1047,7 +1183,7 @@ int main(void)
 				  S.CAN_MSG = NO_MSG; // we ve used the MSG ,now discard it.
 				  S.motorState = RUN_STATE;
 				  if (LRM.controlType == OPEN_LOOP){
-					  posOL_SetupMove(&posOL,GB.absPosition,LRM.distance,LRM.direction,LRM.duty);
+					  posOL_SetupMove(&posOL,GB.correctedPosition,LRM.distance,LRM.direction,LRM.duty);
 					  posOL_SetupEncPosMove(&posOL,encPos.absPosition,LRM.distance,LRM.direction);
 					  encPos_ZeroMovement(&encPos);
 					  SetupLiftRampDuty(&liftRampDuty,LRM.duty,LRM.rampUpTime_ms,LRM.rampDownTime_ms,RUN_FOREVER,400,800);
@@ -1056,7 +1192,7 @@ int main(void)
 				  }
 				  if (LRM.controlType == CLOSED_LOOP){
 					  PC_Reset(&PC);
-					  posCL_SetupMove(&posCL,GB.absPosition,LRM.distance,LRM.direction,LRM.time);
+					  posCL_SetupMove(&posCL,GB.correctedPosition,LRM.distance,LRM.direction,LRM.time);
 					  posCL_SetupEncPosMove(&posCL,encPos.absPosition,LRM.distance,LRM.direction);
 					  encPos_ZeroMovement(&encPos);
 					  PC_SetupRampTimes(&PC,LRM.rampUpTime_ms,LRM.rampDownTime_ms,LRM.directionChangeRamp_ms);
@@ -1086,7 +1222,7 @@ int main(void)
 	  				  S.CAN_MSG = NO_MSG; // we ve used the MSG ,now discard it.
 	  				  S.motorState = RUN_STATE;
 	  				  PC_Reset(&PC);
-					  posCL_SetupMove(&posCL,GB.absPosition,LRM.distance,LRM.direction,LRM.time);
+					  posCL_SetupMove(&posCL,GB.correctedPosition,LRM.distance,LRM.direction,LRM.time);
 					  posCL_SetupEncPosMove(&posCL,encPos.absPosition,LRM.distance,LRM.direction);
 					  encPos_ZeroMovement(&encPos);
 					  PC_SetupRampTimes(&PC,LRM.rampUpTime_ms,LRM.rampDownTime_ms,LRM.directionChangeRamp_ms);
@@ -1118,7 +1254,7 @@ int main(void)
 			  LRM.logReturn = RUNTIME_LOG;
 			  float remainingTime = RecalculateTime_OnResume(&posCL,&PC);
 			  PC_Reset(&PC);
-			  posCL_SetupMove(&posCL,GB.absPosition,posCL.remainingDistance_mm,LRM.direction,remainingTime);
+			  posCL_SetupMove(&posCL,GB.correctedPosition,posCL.remainingDistance_mm,LRM.direction,remainingTime);
 			  posCL_SetupEncPosMove(&posCL,encPos.absPosition,posCL.remainingDistance_mm,LRM.direction);
 			  encPos_ZeroMovement(&encPos);
 
@@ -1153,7 +1289,7 @@ int main(void)
 			  S.RM_state = NO_RM_MSG;
 			  S.CAN_MSG = NO_MSG; // we ve used the MSG ,now discard it.
 			  S.motorState = RUN_STATE;
-			  posCL_SetupMove(&posCL,GB.absPosition,LRM.distance,LRM.direction,LRM.time);
+			  posCL_SetupMove(&posCL,GB.correctedPosition,LRM.distance,LRM.direction,LRM.time);
 			  posCL_SetupEncPosMove(&posCL,encPos.absPosition,LRM.distance,LRM.direction);
 			  encPos_ZeroMovement(&encPos);
 			  PC_Reset(&PC);
@@ -1192,7 +1328,7 @@ int main(void)
 		  if (posPts.alreadyAtHome_Flag == 0){
 			  if (posPts.homingControlType == CLOSED_LOOP){
 				  LRM.controlType = CLOSED_LOOP;
-				  posCL_SetupMove(&posCL,GB.absPosition,posPts.homingDistance,posPts.homingDirection,posPts.homingTime);
+				  posCL_SetupMove(&posCL,GB.correctedPosition,posPts.homingDistance,posPts.homingDirection,posPts.homingTime);
 				  posCL_SetupEncPosMove(&posCL,encPos.absPosition,posPts.homingDistance,posPts.homingDirection);
 				  encPos_ZeroMovement(&encPos);
 
@@ -1210,7 +1346,7 @@ int main(void)
 			  }else{
 				  LRM.controlType = OPEN_LOOP;
 				  uint16_t homingDuty = 300;
-				  posOL_SetupMove(&posOL,GB.absPosition,posPts.homingDistance,posPts.homingDirection,homingDuty);
+				  posOL_SetupMove(&posOL,GB.correctedPosition,posPts.homingDistance,posPts.homingDirection,homingDuty);
 				  posOL_SetupEncPosMove(&posOL,encPos.absPosition,posPts.homingDistance,posPts.homingDirection);
 				  encPos_ZeroMovement(&encPos);
 				  SetupLiftRampDuty(&liftRampDuty,homingDuty,1000,1000,RUN_FOREVER,400,800);
@@ -1220,7 +1356,7 @@ int main(void)
 		  }else{
 			  FDCAN_HomingDone(S.CAN_ID,HOMING_DONE);
 			  S.motorState = IDLE_STATE;
-			  encPos_ZeroAbsPosition(&encPos,GB.absPosition);
+			  encPos_ZeroAbsPosition(&encPos,GB.correctedPosition);
 		  }
 		  S.CAN_MSG = NO_MSG;
 	  }

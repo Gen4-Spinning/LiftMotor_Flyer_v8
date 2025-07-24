@@ -28,16 +28,29 @@
 #define HOMING_SETUP_DONE 2
 #define HOMING_SETUP_FAILED 3
 
+#define MAX_BINS 21
+#define BIN_SIZE 15
+
+
 
 typedef struct GB_struct {
 	uint16_t rawPWM_cnts;
+
 	uint16_t PWM_cnts;
+	uint16_t prevPWM_cnts;
+	uint16_t useCnts;
+	uint8_t readFirstTime;
+
+	uint8_t badreadingcounter;
 	uint16_t PWM_Period;
 	float PWM_dutyCycle;
-	float absPosition;
+	float correctedPosition;
 	float prevAbsPosition;
 	float deltaAbsPosition;
 
+	float RawPosition;
+
+	//float absPosition;
 	//encoder health.
 	uint8_t firstReading;
 
@@ -51,11 +64,24 @@ typedef struct GB_struct {
 
 } GB_TypeDef;
 
+typedef struct Error{
+	  float bin_sums[MAX_BINS];
+	    int bin_counts[MAX_BINS];
+	    int bin_min_enc[MAX_BINS];
+	    int bin_max_enc[MAX_BINS];
+	    float bin_means[MAX_BINS];
+	    int prev_bin;
+	    float binErrorTable[MAX_BINS];
+	    float final_bin_errors[MAX_BINS];
+}Error_TypeDef;
+
 extern GB_TypeDef GB;
+extern Error_TypeDef EGB;
 
 
 void init_GB(GB_TypeDef *gb);
 uint8_t check_GB_Encoder_Health(void);
+void init_EG(Error_TypeDef *eg);
 void Answer_GB_Request(void);
 void CalculateGB_deltaPosition(GB_TypeDef *gb);
 

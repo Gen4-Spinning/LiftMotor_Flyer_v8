@@ -33,7 +33,7 @@ extern TIM_HandleTypeDef htim17;
 void Console_LiftOL_Start(void){
 	LRM.controlType = OPEN_LOOP;
 	LRM.runType = LOCAL_DEBUG;
-	posOL_SetupMove(&posOL,GB.absPosition,LRM.distance,LRM.direction,LRM.duty);//set up GB end Pos
+	posOL_SetupMove(&posOL, GB.RawPosition,LRM.distance,LRM.direction,LRM.duty);//set up GB end Pos
 	posOL_SetupEncPosMove(&posOL,encPos.absPosition,LRM.distance,LRM.direction); //set up delta Encoder end pos
 	encPos_ZeroMovement(&encPos);
 	SetupLiftRampDuty(&liftRampDuty,LRM.duty,2000,2000,RUN_FOREVER,400,800);
@@ -52,7 +52,7 @@ void Console_LiftCL_Start(void){
 	LRM.runType = LOCAL_DEBUG;
 	LRM.controlType = CLOSED_LOOP;
 	S.motorState = RUN_STATE;
-	posCL_SetupMove(&posCL,GB.absPosition,LRM.distance,LRM.direction,LRM.time);
+	posCL_SetupMove(&posCL,GB.correctedPosition,LRM.distance,LRM.direction,LRM.time);
 	posCL_SetupEncPosMove(&posCL,encPos.absPosition,LRM.distance,LRM.direction);
 	encPos_ZeroMovement(&encPos);
 	PC_SetupRampTimes(&PC,10000,10000,1000);
@@ -93,6 +93,8 @@ int waitForNoInput(void){
 	}
 	return BADCONSOLE_VAL;
 }
+
+
 
 
 uint8_t configurePIDSettings(void){
@@ -318,7 +320,7 @@ uint8_t printSettings(void){
 			printf("\r\n MOTOR Default Dir = %d (CW=0,CCW=1)",sV.default_direction);
 			printf("\r\n Kp:%5.2f, Ki:%5.2f, FF_percent:%02d, StartOffset:%03d",sV.Kp,sV.Ki,sV.ff_percent,sV.start_offset);
 			printf("\r\n GearBox PWM Counts = %05d",GB.PWM_cnts);
-			printf("\r\n GearBox Abs Position = %5.2f",GB.absPosition);
+			printf("\r\n GearBox Abs Position = %5.2f",GB.correctedPosition);
 			printf("\r\n GearBox Homing Position = %05d",posPts.homingPositionCnts);
 			printf("\r\n MotorEncoder Abs Position = %6.2f",encPos.absPosition);
 			printf("\r\n GearBox LOB Limit Disabled? = %01d",GB.overRideBounds);
@@ -387,6 +389,7 @@ uint8_t runGearBoxCalibrationRoutine(void){
 			printf("\r\n Use the OL Run mode to bring it to this position");
 			printf("\r\n Press 1 to start the run. Start saving terminal output Before pressing 1");
 			printf("\r\n Press 2 to stop the run any time");
+			printf("\r\n Press 3 to save bin errors to EEPROM");
 			printf("\r\n Enter -1 to exit");
 			firstTime = 0;
 		}
@@ -396,38 +399,131 @@ uint8_t runGearBoxCalibrationRoutine(void){
 		if (noEntered == -1){
 			noEntered = 0;
 			break;
-		}else if (noEntered == 1){
-				if (C.runningOL == 0){
-					printf("\r\n ---START!---\r\n");
-					printf("\r\n Sec,Duty,EncoderDist,GB_Duty_Cnt,GB_Dist_moved,GB_absDist\r\n");
-					LRM.distance = 350;
-					LRM.duty = 200;// Run it slowly so that you get the lowest possible pwm duty val.
-					LRM.direction = 1; // (UP is 1, Down is 0)
-					Console_LiftOL_Start();
-					C.runningOL = 1;
-					C.calibRun = 1;
-					C.logging = 1;
-					noEntered = 0;
-				}
-		}else if (noEntered == 2){
-			if (C.runningOL == 1){
-				printf("\r\n *** Stopping ***\r\n");
-				Console_LiftOL_Stop();
+		}
+		else if (noEntered == 1){
+			if (C.runningOL == 0){
+				printf("\r\n ---START!---\r\n");
+				init_EG(&EGB);
+				LRM.distance = 300;
+				LRM.duty = 200; // Slow speed for accurate data
+				LRM.direction = 1; // (UP is 1, Down is 0)
+				Console_LiftOL_Start();
+				C.runningOL = 1;
+				C.calibRun = 1;
+				C.logging = 1;
 				noEntered = 0;
+			}
+		}
+		else if (noEntered == 2){
+			if (C.runningOL == 1){
+				printf("\r\n * Stopping *\r\n");
+				Console_LiftOL_Stop();
 				C.runningOL = 0;
 				C.calibRun = 0;
+				noEntered = 0;
+
+				printf("\r\nFinal Average Error Per Bin:\r\n");
+				printf("BIN\tMin_ENC\tMax_ENC\tAverage_Error\tCount\r\n");
+
+				// Store average errors into global array
+				for (int i = 0; i < MAX_BINS; i++) {
+					if (EGB.bin_counts[i] > 0) {
+						EGB.final_bin_errors[i] = EGB.bin_sums[i] / EGB.bin_counts[i];
+						printf("%02d\t%5d\t%5d\t%7.3f\t\t%d\r\n",
+							i,
+							EGB.bin_min_enc[i],
+							EGB.bin_max_enc[i],
+							EGB.final_bin_errors[i],
+							EGB.bin_counts[i]);
+					} else {
+						EGB.final_bin_errors[i] = 0.0f;
+					}
+				}
+
 				firstTime = 1;
 			}
+		}
+
+		else if (noEntered == 3){
+			printf("\r\nWriting bin errors to EEPROM...\r\n");
+			uint8_t eepromWriteSuccess = writeGBBinErrorsToEEPROM();
+			if (eepromWriteSuccess)
+				printf("EEPROM write success.\r\n");
+			else
+				printf("EEPROM write failed.\r\n");
+
+			noEntered = 0;
 		}
 		else{
 			noEntered = 0;
 			C.calibRun = 0;
 			C.logging = 0;
-			}
-		} // closes while
+		}
+	} // closes while
 
-		return 1;
+	return 1;
 }
+
+uint8_t runGearBoxBinManagement(void) {
+    uint8_t firstTime = 1;
+    int noEntered = 0;
+
+    while (1) {
+        if (firstTime) {
+            printf("\r\n***GEAR BOX Bin Error Management***");
+            printf("\r\n Press 1 to read bin errors from EEPROM and display");
+            printf("\r\n Press 2 to zero all bin errors and write to EEPROM");
+            printf("\r\n Enter -1 to return");
+            firstTime = 0;
+        }
+
+        noEntered = waitForNoInput();
+
+        if (noEntered == -1) {
+            noEntered = 0;
+            break;
+        }
+        else if (noEntered == 1) {
+            printf("\r\nReading bin errors from EEPROM...\r\n");
+
+            float readErrors[MAX_BINS];
+            readGBBinMeanErrorsFromEEPROM(readErrors);
+
+            printf("BIN\tError_from_EEPROM\r\n");
+            for (int i = 0; i < MAX_BINS; i++) {
+                printf("%02d\t%7.3f\r\n", i, readErrors[i]);
+            }
+
+            noEntered = 0;
+        }
+        else if (noEntered == 2) {
+            printf("\r\nZeroing all bin errors...\r\n");
+
+            float zeroErrors[MAX_BINS];
+            for (int i = 0; i < MAX_BINS; i++) {
+                zeroErrors[i] = 0.0f;
+            }
+
+            uint8_t eepromWriteSuccess = writeGBBinErrorsToEEPROM();
+
+            if (eepromWriteSuccess) {
+                printf("EEPROM zeroing success.\r\n");
+            } else {
+                printf("EEPROM zeroing failed.\r\n");
+            }
+
+            noEntered = 0;
+        }
+        else {
+            noEntered = 0;
+        }
+    }
+
+    return 1;
+}
+
+
+
 
 uint8_t ToggleLiftOutOfBoundsLimitSetting(void){
 	uint8_t firstTime = 1;
@@ -790,100 +886,106 @@ uint8_t zeroEncAbsPosition(void){
 			encPos.absPosition = 0;
 			noEntered = 0;
 		}else if (noEntered == 2){
-			printf("\r\n Enc Abs Position set equal to GB Abs Position : %6.2f",GB.absPosition);
-			encPos.absPosition = GB.absPosition;
+			printf("\r\n Enc Abs Position set equal to GB Abs Position : %6.2f",GB.correctedPosition);
+			encPos.absPosition = GB.correctedPosition;
 			noEntered = 0;
 		}
 	}
 	return 1;
 }
 
-void configurationFromTerminal(void){
-  char firstTime = 1;
-  int noEntered;
-  while(1){
-	  if (firstTime == 1){
-		  printf("\r\n***MOTOR CONFIGURATION MENU***");
-		  printf("\r\n 1. View Motor Settings");
-		  printf("\r\n 2. Change Motor CAN ID");
-		  printf("\r\n 3. Change Motor Encoder Offset");
-		  printf("\r\n 4. Change Default Direction");
-		  printf("\r\n 5. Change PID Settings");
-		  printf("\r\n 6. Run Encoder Calibration Routine");
-		  printf("\r\n 7. Run GearBox Homing Setup Routine");
-		  printf("\r\n 8. Run GearBox Calibration Routine");
-		  printf("\r\n 9. Toggle Lift Out Of Bounds Setting");
-		  printf("\r\n 10. Run EncPositioning ClosedLoop");
-		  printf("\r\n 11. Run EncPositioning OpenLoop");
-		  printf("\r\n 12. Zero EncAbsPosition");
-		  printf("\r\n 13. Restart Motor Code");
-		  printf("\r\n Enter a no btw 1-13 and enter to select an option");
-		  printf("\r\n Press -1 and enter from this menu to exit \r\n");
-		  firstTime = 0;
-	  }
+void configurationFromTerminal(void) {
+    char firstTime = 1;
+    int noEntered;
+    while (1) {
+        if (firstTime == 1) {
+            printf("\r\n***MOTOR CONFIGURATION MENU***");
+            printf("\r\n 1. View Motor Settings");
+            printf("\r\n 2. Change Motor CAN ID");
+            printf("\r\n 3. Change Motor Encoder Offset");
+            printf("\r\n 4. Change Default Direction");
+            printf("\r\n 5. Change PID Settings");
+            printf("\r\n 6. Run Encoder Calibration Routine");
+            printf("\r\n 7. Run GearBox Homing Setup Routine");
+            printf("\r\n 8. Run GearBox Calibration Routine");
+            printf("\r\n 9. GearBox Bin Management (View/Zero Bin Errors)");
+            printf("\r\n 10. Toggle Lift Out Of Bounds Setting");
+            printf("\r\n 11. Run EncPositioning ClosedLoop");
+            printf("\r\n 12. Run EncPositioning OpenLoop");
+            printf("\r\n 13. Zero EncAbsPosition");
+            printf("\r\n 14. Restart Motor Code");
+            printf("\r\n Enter a number between 1-14 and press enter to select an option");
+            printf("\r\n Press -1 and enter to exit this menu \r\n");
+            firstTime = 0;
+        }
 
-	  noEntered = waitForNoInput();
+        noEntered = waitForNoInput();
 
-	  if (noEntered == -1){
-		  printf("\r\n Bye!");
-		  printf("\r\n ************");
-		  break;
-	  }
+        if (noEntered == -1) {
+            printf("\r\n Bye!");
+            printf("\r\n ************");
+            break;
+        }
 
-	  if (noEntered == 1){
-		  firstTime = printSettings();
-		  noEntered = 0;
-	  }
-	  if (noEntered == 2){
-		  firstTime = configureSettings(CONSOLE_CANID);
-		  noEntered = 0;
-	  }
-	  if (noEntered == 3){
-		  firstTime = configureSettings(CONSOLE_ENCODER_OFFSET);
-		  noEntered = 0;
-	  }
-	  if (noEntered == 4){
-		  firstTime = configureSettings(CONSOLE_DIRECTION);
-		  noEntered = 0;
-	  }
-	  if (noEntered == 5){
-		  firstTime = configurePIDSettings();
-		  noEntered = 0;
-	  }
-	  if (noEntered == 6){
-		  firstTime = runMotorCalibrationRoutine();
-		  noEntered = 0;
-	  }
-	  if (noEntered == 7){
-		  firstTime = runGearBoxHomingRoutine();
-		  noEntered = 0;
-	  }
-	  if (noEntered == 8){
-		  firstTime = runGearBoxCalibrationRoutine();
-		  noEntered = 0;
-	  }
-	  if (noEntered == 9){
-		  firstTime = ToggleLiftOutOfBoundsLimitSetting();
-		  noEntered = 0;
-	  }
-	  if (noEntered == 10){
-		  firstTime = runLiftMotorClosedLoop();
-		  noEntered = 0;
-	  }
-	  if (noEntered == 11){
-		  firstTime = runLiftMotorOpenLoop();
-		  noEntered = 0;
-	  }
-	  if (noEntered == 12){
-		  firstTime = zeroEncAbsPosition();
-		  noEntered = 0;
-	  }
-	  if (noEntered == 13){
-		  printf("\r\n Resetting Motor Code! Exiting Console also!");
-		  printf("\r\n Bye!");
-		  printf("\r\n ************");
-		  NVIC_SystemReset();
-		  noEntered = 0;
-	  }
-  }
+        if (noEntered == 1) {
+            firstTime = printSettings();
+            noEntered = 0;
+        }
+        if (noEntered == 2) {
+            firstTime = configureSettings(CONSOLE_CANID);
+            noEntered = 0;
+        }
+        if (noEntered == 3) {
+            firstTime = configureSettings(CONSOLE_ENCODER_OFFSET);
+            noEntered = 0;
+        }
+        if (noEntered == 4) {
+            firstTime = configureSettings(CONSOLE_DIRECTION);
+            noEntered = 0;
+        }
+        if (noEntered == 5) {
+            firstTime = configurePIDSettings();
+            noEntered = 0;
+        }
+        if (noEntered == 6) {
+            firstTime = runMotorCalibrationRoutine();
+            noEntered = 0;
+        }
+        if (noEntered == 7) {
+            firstTime = runGearBoxHomingRoutine();
+            noEntered = 0;
+        }
+        if (noEntered == 8) {
+            firstTime = runGearBoxCalibrationRoutine();
+            noEntered = 0;
+        }
+        if (noEntered == 9) {
+            firstTime = runGearBoxBinManagement();
+            noEntered = 0;
+        }
+        if (noEntered == 10) {
+            firstTime = ToggleLiftOutOfBoundsLimitSetting();
+            noEntered = 0;
+        }
+        if (noEntered == 11) {
+            firstTime = runLiftMotorClosedLoop();
+            noEntered = 0;
+        }
+        if (noEntered == 12) {
+            firstTime = runLiftMotorOpenLoop();
+            noEntered = 0;
+        }
+        if (noEntered == 13) {
+            firstTime = zeroEncAbsPosition();
+            noEntered = 0;
+        }
+        if (noEntered == 14) {
+            printf("\r\n Resetting Motor Code! Exiting Console also!");
+            printf("\r\n Bye!");
+            printf("\r\n ************");
+            NVIC_SystemReset();
+            noEntered = 0;
+        }
+    }
 }
+

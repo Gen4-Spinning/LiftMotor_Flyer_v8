@@ -88,7 +88,7 @@ typedef struct Errors_Struct
 	char liftPosTrackingError;
 	char liftSynchronicityError;
 	char liftOutOfBoundsError;
-	char eerpomBadHomingPos;
+	char eepromBadHomingPos;
 	char errorFlag;//this flag is set when any of the critical error shows up
 }ErrorsTypeDef;
 
@@ -112,6 +112,10 @@ typedef struct runtimeVarStruct {
   uint16_t feedforwardTerm;
   uint16_t startOffsetTerm;
   uint16_t motorError;//this variable is sent on the canbus to motherboard
+
+  float encPresentPosition;
+  float GBPresentPosition;
+  uint8_t  usingPosition;
 }runtimeVarsTypeDef;
 
 typedef struct Dbg_MultiStroke_oneSideRun

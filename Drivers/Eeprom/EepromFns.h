@@ -21,5 +21,6 @@ uint8_t checkEEPROM_PWMSettings(settingVar *sV);
 uint8_t checkEEPROM_MotorSettings(settingVar *sV);
 uint8_t writeHomingPositionToEeprom(uint16_t homingPosition);
 uint16_t readHomingPositionFromEeprom(void);
-
+void readGBBinMeanErrorsFromEEPROM(float *binErrors);
+uint8_t writeGBBinErrorsToEEPROM(void);
 #endif /* EEPROM_EEPROMFNS_H_ */

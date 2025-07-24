@@ -19,7 +19,7 @@ uint8_t runtimedata_flyer[8], runtimedata_bobbin[8];
 uint8_t diagnosticsdata_flyer[8], diagnosticsdata_bobbin[8];
 
 FDCAN_TxHeaderTypeDef   TxHeader;
-uint8_t               TxData[16];
+uint8_t               TxData[20];
 extern FDCAN_RxHeaderTypeDef   RxHeader;
 extern uint8_t               RxData[16];
 
