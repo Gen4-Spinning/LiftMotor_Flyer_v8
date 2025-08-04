@@ -9,6 +9,7 @@
 #include "EepromSettings.h"
 #include "EepromFns.h"
 #include "GB.h"
+#include <math.h>
 
 #define FLOAT_SIZE 4
 
@@ -47,8 +48,6 @@ uint8_t writePWMSettingsToEEPROM(settingVar *stV)
     else{
     	return 0;}
 }
-
-
 uint8_t writeGBBinErrorsToEEPROM(void)
 {
     uint8_t dataWritten = 0;
@@ -63,6 +62,37 @@ uint8_t writeGBBinErrorsToEEPROM(void)
     else
         return 0;
 }
+//
+//uint8_t writeGBBinErrorsToEEPROM(void)
+//{
+//    // Validate bin 0
+//    if (fabs(EGB.final_bin_errors[0]) > 1.5f) {
+//        printf("\r\nCheck the gearbox. It is deviated more. Also check other bins.\r\n");
+//        return 0;
+//    }
+//
+//    // Validate all bins for deviation > 12
+//    for (int i = 0; i < MAX_BINS; i++) {
+//        if (fabs(EGB.final_bin_errors[i]) > 12.0f) {
+//            printf("\r\nCheck the gearbox. It is deviated more. Also check other bins.\r\n");
+//            return 0;
+//        }
+//    }
+//
+//    uint8_t dataWritten = 0;
+//    for (int i = 0; i < MAX_BINS; i++) {
+//        uint16_t addr = GERABOX_ERROR_VALUE + (i * FLOAT_SIZE);
+//        dataWritten += EE_WriteFloat(EGB.final_bin_errors[i], addr);
+//        HAL_Delay(1);
+//    }
+//
+//    // Check if all bins were successfully written
+//    if (dataWritten <= MAX_BINS)
+//        return 1;
+//    else
+//        return 0;
+//}
+
 
 
 void readGBBinMeanErrorsFromEEPROM(float *binErrors)

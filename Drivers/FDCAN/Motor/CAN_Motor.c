@@ -16,10 +16,10 @@ void FDCAN_liftRunDataFromMotor(void)
 	TxHeader.Identifier =(0xE0C01<<8)|S.CAN_ID;//set to transmit runtime data frame from flyer to motherboard
 	TxHeader.DataLength = FDCAN_DLC_BYTES_20;
 
-	TxData[0]=(uint16_t)(R.targetPosition*100.0)>>8;
-	TxData[1]=(uint16_t)(R.targetPosition*100.0);
-	TxData[2]=(uint16_t)(R.presentPosition*100.0)>>8;
-	TxData[3]=(uint16_t)(R.presentPosition*100.0);
+	TxData[0]=(int16_t)(R.targetPosition*100.0)>>8;
+	TxData[1]=(int16_t)(R.targetPosition*100.0);
+	TxData[2]=(int16_t)(R.presentPosition*100.0)>>8;
+	TxData[3]=(int16_t)(R.presentPosition*100.0);
 	TxData[4]=(R.presentRPM)>>8;
 	TxData[5]=R.presentRPM;
 	TxData[6]=(R.appliedDuty)>>8;
@@ -32,10 +32,10 @@ void FDCAN_liftRunDataFromMotor(void)
 	TxData[13]=R.busVoltageADC;
 	TxData[14]=R.liftDirection;
 
-	TxData[15]=(uint16_t)(R.GBPresentPosition*100.0)>>8;
-	TxData[16]=(uint16_t)(R.GBPresentPosition*100.0);
-	TxData[17]=(uint16_t)(R.encPresentPosition*100.0)>>8;
-	TxData[18]=(uint16_t)(R.encPresentPosition*100.0);
+	TxData[15]=(int16_t)(R.GBPresentPosition*100.0)>>8;
+	TxData[16]=(int16_t)(R.GBPresentPosition*100.0);
+	TxData[17]=(int16_t)(R.encPresentPosition*100.0)>>8;
+	TxData[18]=(int16_t)(R.encPresentPosition*100.0);
 	TxData[19]=R.usingPosition;
 
 

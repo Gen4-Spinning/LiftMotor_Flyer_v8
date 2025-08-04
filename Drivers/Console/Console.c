@@ -405,7 +405,7 @@ uint8_t runGearBoxCalibrationRoutine(void){
 				printf("\r\n ---START!---\r\n");
 				init_EG(&EGB);
 				LRM.distance = 300;
-				LRM.duty = 200; // Slow speed for accurate data
+				LRM.duty = 200;
 				LRM.direction = 1; // (UP is 1, Down is 0)
 				Console_LiftOL_Start();
 				C.runningOL = 1;

@@ -53,9 +53,9 @@ uint8_t checkHomingPosition(uint16_t homingPosCnts){
 
 // if the
 void calculateHomeMove(PosPoints *p,uint16_t currentPosition){
-	float deltaCnts = currentPosition - p->homingPositionCnts;
-	float delta_mm = (float)deltaCnts/GB_ENCODER_TIM3CNTS_PER_MM;
-
+//	float deltaCnts = currentPosition - p->homingPositionCnts;
+//	float delta_mm = (float)deltaCnts/GB_ENCODER_TIM3CNTS_PER_MM;
+	float delta_mm = currentPosition;
 	p->alreadyAtHome_Flag = 0;
 
 // if the delta distance to move is less than 10mm, we let the home happen through open loop

@@ -23,7 +23,6 @@ typedef struct PositioningOpenLoop_struct {
 	float GB_absEndPosition;
 	float GB_absStartPosition;
     float GB_absCurrentPosition;
-
     float GBPoscurrentMoveDist_mm;
 
     float encPos_absEndPosition;
